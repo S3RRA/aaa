@@ -1,10 +1,6 @@
 import { Schema } from "mongoose";
 
 export const MessageSchema = new Schema({
-    track: {
-        type: Schema.Types.ObjectId,
-        ref: 'Tracks'
-    },
     writer: String,
     message: String
 });
