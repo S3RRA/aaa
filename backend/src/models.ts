@@ -1,4 +1,4 @@
-import { Schema } from "mongoose";
+import { Schema, SchemaTypes } from "mongoose";
 
 export const MessageSchema = new Schema({
     writer: String,
@@ -14,7 +14,9 @@ export const TrackSchema = new Schema({
         type: Schema.Types.ObjectId,
         ref: 'Messages'
     }],
-    status: String
+    title: String,
+    description: String,
+    status: String //Not started,In progress,Bug,Finished
 });
 
 export const ProfileSchema = new Schema({
@@ -35,11 +37,17 @@ export const ClientSchema = new Schema({
             aditional_identities: [String]
         }  
     },
+    profiles:[{
+        profile: {
+            type: Schema.Types.ObjectId,
+            ref: 'Profiles'
+        },
+        status: String //No viable, Not started, Track opened, Completed
+    }],
     tracks: [{
         type: Schema.Types.ObjectId,
         ref: 'Tracks'
     }],
-    status: String
 });
 
 export const AssignedProfileSchema = new Schema({
@@ -55,8 +63,8 @@ export const AssignedProfileSchema = new Schema({
     project: String,
     status: String,
     comments: [{
-        writer: String,
-        comment: String
+        type: Schema.Types.ObjectId,
+        ref: 'Messages'
     }]
 });
 

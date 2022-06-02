@@ -77,12 +77,32 @@ router.get('/incs', async (req: Request, res: Response) => {
         path: 'assigned_profiles',
         populate: [
             { path: 'profiles'},
-            { path: 'clients' }
+            { 
+                path: 'clients',
+                populate: [
+                    {
+                        path: 'tracks',
+                        populate: [
+                            { path: 'messages' },
+                            { path: 'profile' }
+                        ]
+                    },
+                    { 
+                        path: 'profiles', 
+                        select: { id: 1, _id: 0 },
+                        populate: {
+                            path: 'profile',
+                            select: { id: 1, _id: 0 }
+                        } 
+                    }
+                    
+                ]             
+            }
         ]
     };
     await INC_MODEL.find({}).populate(query)
         .then((incs: any) => res.status(200).send(incs))
-        .catch((e: any) => res.status(500).send('Server error, please retry.'));
+        .catch((e: any) => res.status(500).send(e + 'Server error, please retry.'));
 
 });
 //Edit INC -> OK
@@ -162,9 +182,50 @@ router.delete('/incs/:incid/:assigned_profileid', async (req: Request, res: Resp
 
 /*CLIENTES*/
 
+//Get all clients with assigned_profile
+router.get('/test-clients/assigned_profiles', async(req: Request, res: Response) => {
+    await CLIENT_MODEL.aggregate([
+        {
+            $lookup: {
+                'from': ASSIGNED_PROFILE_MODEL.collection.name,
+                'localField': '_id',
+                'foreignField': 'clients',
+                'as': 'assigned_profiles'
+            },
+        } 
+    ])
+    .then(async (clients: any) => {
+        const profiles = await PROFILE_MODEL.find({}).catch((e: any)=> console.log(e));
+        const profile_ids = profiles.map((profile: any) => profile._id.toString());
+        for(let i=0; i<clients.length; i++){
+            for(let j=0; j<clients[i].assigned_profiles.length; j++){
+                const assigned_profiles = [];
+                for(let k=0; k<clients[i].assigned_profiles[j].profiles.length; k++){
+                    if(profile_ids.includes(clients[i].assigned_profiles[j].profiles[k].toString())){
+                        const profile_index = profile_ids.indexOf(clients[i].assigned_profiles[j].profiles[k].toString());
+                        assigned_profiles.push({id: profiles[profile_index].id, description: profiles[profile_index].description});
+                    }
+                }
+                clients[i].assigned_profiles[j].profiles = assigned_profiles;
+            }   
+        }
+        res.status(200).send(clients);
+    })
+    .catch((e: any) => { console.log(e); res.status(500).send('Server error, please retry') });
+});
 //Get all clients -> OK
 router.get('/test-clients', async (req: Request, res: Response) => {
-    await CLIENT_MODEL.find({}).populate('tracks')
+    await CLIENT_MODEL.find({}).populate([
+            { path: 'tracks' },
+            { 
+                path: 'profiles', 
+                select: { id: 1, _id: 0 },
+                populate: {
+                    path: 'profile',
+                    select: { id: 1, _id: 0 }
+                } 
+            }
+        ])
         .then((clients: any) => res.status(200).send(clients))
         .catch((e: any) => res.status(500).send('Server error, please retry'));
 });
@@ -186,8 +247,22 @@ router.get('/test-clients/:dni', async (req: Request, res:Response) => {
 router.post('/incs/:inc/:profile', async (req: Request, res: Response) => {
     const { inc, profile } = req.params; //Profile es _id de assigned_profile
     const { dni, telco } = req.body;
-    const client = new CLIENT_MODEL({ dni, telco });
 
+    let assigned_profile: any;
+
+    await ASSIGNED_PROFILE_MODEL.find({_id: profile})
+        .then((d: any) => assigned_profile = d[0])
+        .catch((e: any) => console.log(e));
+
+    const client_profiles = [];
+    for(let profile of assigned_profile.profiles){
+        client_profiles.push({
+            profile: profile._id.toString(),
+            status: 'Not started'
+        });
+    }
+
+    const client = new CLIENT_MODEL({ dni, telco, status: 'Not started', profiles: client_profiles });
     await client.save();
 
     await ASSIGNED_PROFILE_MODEL.updateOne(
@@ -196,15 +271,19 @@ router.post('/incs/:inc/:profile', async (req: Request, res: Response) => {
             $push: {
                 clients: client._id.toString()
             }
+        },
+        {
+            upsert: false
         }
     )
     .then((d: any) => console.log(d))
     .catch((e: any) => console.log(e));
 
+
     res.send(204);
 
 });
-//Edit client -> OK
+//Edit client -> OK --> REPASAR
 router.put('/test-clients/:dni', async (req: Request, res: Response) => {
     const { dni } = req.params;
     await CLIENT_MODEL.findOneAndUpdate({dni}, req.body)
@@ -224,13 +303,18 @@ router.delete('/test-clients/:  dni', async (req: Request, res: Response) => {
 //Create track -> OK
 router.post('/test-clients/:clientid/:profileid', async (req: Request, res: Response) => {
     const { clientid, profileid } = req.params;
+    const { title, description } = req.body;
 
     const [profile] = await PROFILE_MODEL.find({id: profileid})
         .catch((e: any) => console.log(e));
 
-    const track = new TRACK_MODEL({profile, status: 'open'});
+    const track = new TRACK_MODEL({
+        title,
+        description,
+        profile,
+        status: 'open'
+    });
     await track.save();
-
 
     await CLIENT_MODEL.updateOne(
             { dni: clientid },
@@ -279,33 +363,17 @@ router.post('/test-clients/:clientid/:trackid/msgs', async (req: Request, res: R
 
     await msg.save();
 
-    const query = {
-        path: 'tracks',
-        populate: 'profile'
-    }
-    const client = await CLIENT_MODEL.findOne({dni: clientid}).populate(query).lean()
-        .catch((e: any) => console.log(e));
-    
-    if(client){
-        for(let i=0; i<client.tracks.length; i++){
-            if(client.tracks[i].profile.id === trackid){
-                await TRACK_MODEL.updateOne(
-                    { _id: client.tracks[i]._id.toString() },
-                    {
-                        $push: { messages: msg._id.toString() }
-                    }
-                )
-                .then((d: any) => {console.log(d);res.send(204);})
-                .catch((e: any) => {
-                    console.log(e);
-                    res.status(500).send('Server error please retry');
-                });
-            }
+    await TRACK_MODEL.updateOne(
+        { _id: trackid },
+        {
+            $push: { messages: msg._id.toString() }
         }
-    } else {
-        res.send('The specified track is not opened to the specified client.')
-    }
-   
+    )
+    .then((d: any) => {console.log(d);res.send(204);})
+    .catch((e: any) => {
+        console.log(e);
+        res.status(500).send('Server error please retry');
+    });
 });
 //Get all msg -> OK
 router.get('/messages', async (req: Request, res: Response) => {

@@ -77,12 +77,31 @@ router.get('/incs', (req, res) => __awaiter(void 0, void 0, void 0, function* ()
         path: 'assigned_profiles',
         populate: [
             { path: 'profiles' },
-            { path: 'clients' }
+            {
+                path: 'clients',
+                populate: [
+                    {
+                        path: 'tracks',
+                        populate: [
+                            { path: 'messages' },
+                            { path: 'profile' }
+                        ]
+                    },
+                    {
+                        path: 'profiles',
+                        select: { id: 1, _id: 0 },
+                        populate: {
+                            path: 'profile',
+                            select: { id: 1, _id: 0 }
+                        }
+                    }
+                ]
+            }
         ]
     };
     yield INC_MODEL.find({}).populate(query)
         .then((incs) => res.status(200).send(incs))
-        .catch((e) => res.status(500).send('Server error, please retry.'));
+        .catch((e) => res.status(500).send(e + 'Server error, please retry.'));
 }));
 //Edit INC -> OK
 router.put('/incs/:id', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
@@ -150,9 +169,50 @@ router.delete('/incs/:incid/:assigned_profileid', (req, res) => __awaiter(void 0
         .catch(() => res.sendStatus(500).send('Server error please retry.'));
 }));
 /*CLIENTES*/
+//Get all clients with assigned_profile
+router.get('/test-clients/assigned_profiles', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    yield CLIENT_MODEL.aggregate([
+        {
+            $lookup: {
+                'from': ASSIGNED_PROFILE_MODEL.collection.name,
+                'localField': '_id',
+                'foreignField': 'clients',
+                'as': 'assigned_profiles'
+            },
+        }
+    ])
+        .then((clients) => __awaiter(void 0, void 0, void 0, function* () {
+        const profiles = yield PROFILE_MODEL.find({}).catch((e) => console.log(e));
+        const profile_ids = profiles.map((profile) => profile._id.toString());
+        for (let i = 0; i < clients.length; i++) {
+            for (let j = 0; j < clients[i].assigned_profiles.length; j++) {
+                const assigned_profiles = [];
+                for (let k = 0; k < clients[i].assigned_profiles[j].profiles.length; k++) {
+                    if (profile_ids.includes(clients[i].assigned_profiles[j].profiles[k].toString())) {
+                        const profile_index = profile_ids.indexOf(clients[i].assigned_profiles[j].profiles[k].toString());
+                        assigned_profiles.push({ id: profiles[profile_index].id, description: profiles[profile_index].description });
+                    }
+                }
+                clients[i].assigned_profiles[j].profiles = assigned_profiles;
+            }
+        }
+        res.status(200).send(clients);
+    }))
+        .catch((e) => { console.log(e); res.status(500).send('Server error, please retry'); });
+}));
 //Get all clients -> OK
 router.get('/test-clients', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    yield CLIENT_MODEL.find({}).populate('tracks')
+    yield CLIENT_MODEL.find({}).populate([
+        { path: 'tracks' },
+        {
+            path: 'profiles',
+            select: { id: 1, _id: 0 },
+            populate: {
+                path: 'profile',
+                select: { id: 1, _id: 0 }
+            }
+        }
+    ])
         .then((clients) => res.status(200).send(clients))
         .catch((e) => res.status(500).send('Server error, please retry'));
 }));
@@ -174,12 +234,26 @@ router.get('/test-clients/:dni', (req, res) => __awaiter(void 0, void 0, void 0,
 router.post('/incs/:inc/:profile', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const { inc, profile } = req.params; //Profile es _id de assigned_profile
     const { dni, telco } = req.body;
-    const client = new CLIENT_MODEL({ dni, telco });
+    let assigned_profile;
+    yield ASSIGNED_PROFILE_MODEL.find({ _id: profile })
+        .then((d) => assigned_profile = d[0])
+        .catch((e) => console.log(e));
+    console.log(assigned_profile);
+    const client_profiles = [];
+    for (let profile of assigned_profile.profiles) {
+        client_profiles.push({
+            profile: profile._id.toString(),
+            status: 'Not started'
+        });
+    }
+    const client = new CLIENT_MODEL({ dni, telco, status: 'Not started', profiles: client_profiles });
     yield client.save();
     yield ASSIGNED_PROFILE_MODEL.updateOne({ _id: profile }, {
         $push: {
             clients: client._id.toString()
         }
+    }, {
+        upsert: false
     })
         .then((d) => console.log(d))
         .catch((e) => console.log(e));
@@ -203,9 +277,15 @@ router.delete('/test-clients/:  dni', (req, res) => __awaiter(void 0, void 0, vo
 //Create track -> OK
 router.post('/test-clients/:clientid/:profileid', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const { clientid, profileid } = req.params;
+    const { title, description } = req.body;
     const [profile] = yield PROFILE_MODEL.find({ id: profileid })
         .catch((e) => console.log(e));
-    const track = new TRACK_MODEL({ profile, status: 'open' });
+    const track = new TRACK_MODEL({
+        title,
+        description,
+        profile,
+        status: 'open'
+    });
     yield track.save();
     yield CLIENT_MODEL.updateOne({ dni: clientid }, {
         $push: { tracks: track._id.toString() }
@@ -242,29 +322,14 @@ router.post('/test-clients/:clientid/:trackid/msgs', (req, res) => __awaiter(voi
     const { writer, message } = req.body;
     const msg = new MESSAGE_MODEL({ writer, message });
     yield msg.save();
-    const query = {
-        path: 'tracks',
-        populate: 'profile'
-    };
-    const client = yield CLIENT_MODEL.findOne({ dni: clientid }).populate(query).lean()
-        .catch((e) => console.log(e));
-    if (client) {
-        for (let i = 0; i < client.tracks.length; i++) {
-            if (client.tracks[i].profile.id === trackid) {
-                yield TRACK_MODEL.updateOne({ _id: client.tracks[i]._id.toString() }, {
-                    $push: { messages: msg._id.toString() }
-                })
-                    .then((d) => { console.log(d); res.send(204); })
-                    .catch((e) => {
-                    console.log(e);
-                    res.status(500).send('Server error please retry');
-                });
-            }
-        }
-    }
-    else {
-        res.send('The specified track is not opened to the specified client.');
-    }
+    yield TRACK_MODEL.updateOne({ _id: trackid }, {
+        $push: { messages: msg._id.toString() }
+    })
+        .then((d) => { console.log(d); res.send(204); })
+        .catch((e) => {
+        console.log(e);
+        res.status(500).send('Server error please retry');
+    });
 }));
 //Get all msg -> OK
 router.get('/messages', (req, res) => __awaiter(void 0, void 0, void 0, function* () {

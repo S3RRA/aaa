@@ -15,7 +15,9 @@ exports.TrackSchema = new mongoose_1.Schema({
             type: mongoose_1.Schema.Types.ObjectId,
             ref: 'Messages'
         }],
-    status: String
+    title: String,
+    description: String,
+    status: String //Not started,In progress,Bug,Finished
 });
 exports.ProfileSchema = new mongoose_1.Schema({
     type: String,
@@ -34,11 +36,17 @@ exports.ClientSchema = new mongoose_1.Schema({
             aditional_identities: [String]
         }
     },
+    profiles: [{
+            profile: {
+                type: mongoose_1.Schema.Types.ObjectId,
+                ref: 'Profiles'
+            },
+            status: String //No viable, Not started, Track opened, Completed
+        }],
     tracks: [{
             type: mongoose_1.Schema.Types.ObjectId,
             ref: 'Tracks'
         }],
-    status: String
 });
 exports.AssignedProfileSchema = new mongoose_1.Schema({
     profiles: [{
@@ -53,8 +61,8 @@ exports.AssignedProfileSchema = new mongoose_1.Schema({
     project: String,
     status: String,
     comments: [{
-            writer: String,
-            comment: String
+            type: mongoose_1.Schema.Types.ObjectId,
+            ref: 'Messages'
         }]
 });
 exports.IncSchema = new mongoose_1.Schema({

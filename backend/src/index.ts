@@ -1,12 +1,16 @@
 import express from 'express';
 import * as dotenv from 'dotenv';
+import cors from 'cors';
 import routes from './index.routes';
+
 
 dotenv.config();
 const app = express();
 
 app.set('port', 3000);
 console.log('App listening on port 3000');
+
+app.use(cors());
 
 app.use(express.json());
 app.use(express.urlencoded());
